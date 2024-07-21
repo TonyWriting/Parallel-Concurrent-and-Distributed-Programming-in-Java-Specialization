@@ -2,6 +2,14 @@
 
 ## Parallel Programming in Java
 
+### Module 1: Course Introduction
+
+### Module 2: Task Parallelism
+
+Tasks are the most basic unit of parallel programming. An increasing number of programming languages (including Java and C++) are moving from older **thread-based** approaches to more modern **task-based** approaches for parallel programming.
+
+
+
 ### Module 3: Functional Parallelism
 
 #### Future Tasks
@@ -140,8 +148,8 @@ C# has a similar concept called Parallel LINQ (PLINQ).
 
 A parallel program is said to be
 
-- functionally deterministic: if it always computes the same answer when given the same input.
-- structurally deterministic: if it always computes the same computation graph, when given the same input.
+- Functionally deterministic: if it always computes the same answer when given the same input.
+- Structurally deterministic: if it always computes the same computation graph, when given the same input.
 
 An example of computation graph:
 
@@ -164,8 +172,167 @@ The computation graph for this example would look like this:
    E
 
 Critical Path: The longest path through the graph, which determines the minimum time required to complete all tasks. The length of the critical path is a crucial factor in understanding the potential for parallel speedup.
+
+```
+
+```
+// sample: data race and structurally deterministic, but not functionally deterministic
+c = 0;
+forall (i : [0 : N]) {
+  c = c + a[i];
+}
+println("c = " + c);
 ```
 
 The presence of data races often leads to functional and/or structural nondeterminism because a parallel program with data races may exhibit different behaviors for the same input, depending on the relative scheduling and timing of memory accesses involved in a data race.
 
 Furthermore, there may be cases of **benign** nondeterminism for programs with data races in which different executions with the same input may generate different outputs, but all the outputs may be acceptable in the context of the application, e.g., different locations for a search pattern in a target string.
+
+### Module 4: Talking to Two Sigma: Using it in the Field
+
+The managing director of Two Sigma:
+
+> Well, the key thing we look for is a solid education. And in computer science, that means really understanding the fundamentals. So the basics like data structures, and algorithms, and operating systems, and computer systems, extremely important, low level programming understanding. What happens when that try-statement for exception handling comes up? What's it actually doing?...
+>
+> - Do all the homework and really program. 
+> - Think about how the principles that you're learning can be applied to different kinds of things (NOT limited to CS area itself)
+>
+> ...We've seen an amazing uptake in interest from students in machine learning. And it goes hand in hand as you've said with parallel and distributed computing.
+
+Software engineers of Two Sigma:
+
+> Useful theoretical concepts:
+>
+> - Amdahl's Law: Emphasizes the importance of minimizing the **sequential portion** of a task to maximize the benefits of parallel computing.
+> - Critical path length.
+>
+> Getting **as much coding experience outside the classroom as possible** was really helpful, whether that's in a formal internship or something more casual, just working on an independent project.
+
+### Module 5: Loop Parallelism
+
+#### Parallel Loops
+
+The most general way is to think of each iteration of a parallel loop as an *async* task, with a *finish* construct encompassing all iterations. This approach can support general cases such as parallelization of the following pointer-chasing while loop (in pseudocode):
+
+```
+finish {
+	for (p = head; p != null; p = p.next) 
+		async compute(p);
+}
+```
+
+However, further efficiencies can be gained by paying attention to *counted-for* loops for which the number of iterations is known on entry to the loop (before the loop executes its first iteration). We then learned the *forall* notation for expressing parallel counted-for loops:
+
+```
+forall (i : [0:n-1]) 
+	a[i] = b[i] + c[i];
+```
+
+Java streams can be an elegant way of specifying parallel loop computations that produce a single output array, e.g., by rewriting the vector addition statement as follows:
+
+```
+a = IntStream.rangeClosed(0, N-1)
+	.parallel()
+	.toArray(i -> b[i] + c[i]);
+```
+
+In summary, streams are a convenient notation for parallel loops with at most one output array, but the *forall* notation is more convenient for loops that create/update **multiple output** arrays, as is the case in many scientific computations.
+
+#### Parallel Matrix Multiplication
+
+A simple sequential algorithm for two *n* *× n* matrices multiplication as follows:
+
+```
+for(i : [0:n-1]) {
+  for(j : [0:n-1]) { 
+  	c[i][j] = 0;
+    for(k : [0:n-1]) {
+      c[i][j] = c[i][j] + a[i][k]*b[k][j]
+    }
+  }
+}
+```
+
+The interesting question now is: which of the for-i, for-j and for-k loops can be converted to *forall* loops, i.e., can be executed in parallel? Upon a close inspection, we can see that it is safe to **convert for-i and for-j into forall** loops, but for-k must remain a sequential loop to avoid data races. There are some trickier ways to also exploit parallelism in the for-k loop, but they rely on the observation that summation is algebraically associative even though it is computationally non-associative.
+
+#### Barriers in Parallel Loops
+
+The *barrier* construct through a simple example that began with the following *forall* parallel loop:
+
+```
+// HELLO and BYE's orders are random, e.g., BYE1 could run before HELLO2
+forall (i : [0:n-1]) {
+        myId = lookup(i); // convert int to a string 
+        print HELLO, myId;
+        print BYE, myId;
+}
+
+// What if we want to all BYE run after HELLO? -> Barrier
+forall (i : [0:n-1]) {
+        myId = lookup(i); // convert int to a string 
+        print HELLO, myId; // Phase 0
+        NEXT; // Barrier
+        print BYE, myId; // Phase 1
+}
+```
+
+Barriers are a fundamental construct for parallel loops that are used in a majority of real-world parallel applications including Cuda, OpenCL.
+
+#### One-Dimensional Iterative Averaging
+
+The [Jacobi method](https://en.wikipedia.org/wiki/Jacobi_method) for solving such equations typically utilizes two arrays, oldX[] and newX[]. A naive approach to parallelizing this method would result in the following pseudocode:
+
+```
+for (iter: [0:nsteps-1]) {
+  forall (i: [1:n-1]) {
+    newX[i] = (oldX[i-1] + oldX[i+1]) / 2;
+  }
+  swap pointers newX and oldX;
+}
+```
+
+Though easy to understand, this approach creates *nsteps ×* (*n −* 1) tasks, which is too many. Barriers can help reduce the number of tasks created as follows:
+
+```
+forall ( i: [1:n-1]) {
+  localNewX = newX; localOldX = oldX; // this make the newX stores the final result
+  for (iter: [0:nsteps-1]) {
+    localNewX[i] = (localOldX[i-1] + localOldX[i+1]) / 2;
+    NEXT; // Barrier
+    swap pointers localNewX and localOldX;
+  }
+}
+
+// Or if we do not want localNewX and localOldX
+forall ( i: [1:n-1]) {
+  for (iter: [0:nsteps-1]) {
+    newX[i] = (oldX[i-1] + oldX[i+1]) / 2;
+    NEXT; // Barrier
+    if (iter < nsteps - 1) {
+      // Swap oldX and newX for the next iteration
+      swap pointers newX and oldX;
+    }
+  }
+}
+```
+
+In this case, only (*n −* 1) tasks are created, and there are *nsteps* * (*n −* 1) barrier operations. This is a significant improvement since creating **tasks is usually more expensive (overhead) than performing barrier operations**.
+
+#### Iteration Grouping/Chunking in Parallel Loops
+
+Chunking in computer science refers to a strategy for managing data or tasks by **breaking them into smaller**, more manageable pieces, known as "chunks."
+
+The vector addition  example:
+
+```
+forall (i : [0:n-1]) a[i] = b[i] + c[i]
+```
+
+This approach creates *n* tasks, one per *forall* iteration, which is wasteful when (as is common in practice) *n* is much larger than the number of available processor cores. To address this problem, we learned a common tactic used in practice that is referred to as *loop* *chunking* or *iteration grouping*, and focuses on reducing the number of tasks created to be closer to the number of processor cores, so as to reduce the overhead of parallel execution:
+
+```
+forall (g:[0:ng-1])
+  for (i : mygroup(g, ng, [0:n-1])) a[i] = b[i] + c[i]
+```
+
+This reduce the number of task to *ng*. There are two well known approaches for iteration grouping: *block* and *cyclic*. The *block* maps consecutive iterations to the same group, whereas the cyclic maps iterations in the same congruence class (mod *ng*) to the same group.
