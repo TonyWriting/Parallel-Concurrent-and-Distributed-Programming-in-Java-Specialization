@@ -29,7 +29,7 @@ We can express future tasks in Java’s Fork/Join (FJ) framework. Some key diffe
 
 Code example of `RecursiveTask`:
 
-```Java
+```java
 import java.util.concurrent.RecursiveTask;
 import java.util.concurrent.ForkJoinPool;
 
@@ -175,10 +175,10 @@ Critical Path: The longest path through the graph, which determines the minimum 
 
 ```
 
-```
+```java
 // sample: data race and structurally deterministic, but not functionally deterministic
 c = 0;
-forall (i : [0 : N]) {
+forall (i: [0 : N]) {
   c = c + a[i];
 }
 println("c = " + c);
@@ -230,7 +230,7 @@ forall (i : [0:n-1])
 
 Java streams can be an elegant way of specifying parallel loop computations that produce a single output array, e.g., by rewriting the vector addition statement as follows:
 
-```
+```java
 a = IntStream.rangeClosed(0, N-1)
 	.parallel()
 	.toArray(i -> b[i] + c[i]);
@@ -242,7 +242,7 @@ In summary, streams are a convenient notation for parallel loops with at most on
 
 A simple sequential algorithm for two *n* *× n* matrices multiplication as follows:
 
-```
+```java
 for(i : [0:n-1]) {
   for(j : [0:n-1]) { 
   	c[i][j] = 0;
@@ -259,7 +259,7 @@ The interesting question now is: which of the for-i, for-j and for-k loops can b
 
 The *barrier* construct through a simple example that began with the following *forall* parallel loop:
 
-```
+```java
 // HELLO and BYE's orders are random, e.g., BYE1 could run before HELLO2
 forall (i : [0:n-1]) {
         myId = lookup(i); // convert int to a string 
@@ -282,9 +282,9 @@ Barriers are a fundamental construct for parallel loops that are used in a major
 
 The [Jacobi method](https://en.wikipedia.org/wiki/Jacobi_method) for solving such equations typically utilizes two arrays, oldX[] and newX[]. A naive approach to parallelizing this method would result in the following pseudocode:
 
-```
-for (iter: [0:nsteps-1]) {
-  forall (i: [1:n-1]) {
+```java
+for (iter : [0:nsteps-1]) {
+  forall (i : [1:n-1]) {
     newX[i] = (oldX[i-1] + oldX[i+1]) / 2;
   }
   swap pointers newX and oldX;
@@ -293,10 +293,10 @@ for (iter: [0:nsteps-1]) {
 
 Though easy to understand, this approach creates *nsteps ×* (*n −* 1) tasks, which is too many. Barriers can help reduce the number of tasks created as follows:
 
-```
-forall ( i: [1:n-1]) {
+```java
+forall (i : [1:n-1]) {
   localNewX = newX; localOldX = oldX; // this make the newX stores the final result
-  for (iter: [0:nsteps-1]) {
+  for (iter: [0 : nsteps-1]) {
     localNewX[i] = (localOldX[i-1] + localOldX[i+1]) / 2;
     NEXT; // Barrier
     swap pointers localNewX and localOldX;
@@ -304,8 +304,8 @@ forall ( i: [1:n-1]) {
 }
 
 // Or if we do not want localNewX and localOldX
-forall ( i: [1:n-1]) {
-  for (iter: [0:nsteps-1]) {
+forall (i : [1:n-1]) {
+  for (iter : [0:nsteps-1]) {
     newX[i] = (oldX[i-1] + oldX[i+1]) / 2;
     NEXT; // Barrier
     if (iter < nsteps - 1) {
@@ -325,14 +325,181 @@ Chunking in computer science refers to a strategy for managing data or tasks by 
 The vector addition  example:
 
 ```
-forall (i : [0:n-1]) a[i] = b[i] + c[i]
+forall (i : [0:n-1]) 
+  a[i] = b[i] + c[i]
 ```
 
 This approach creates *n* tasks, one per *forall* iteration, which is wasteful when (as is common in practice) *n* is much larger than the number of available processor cores. To address this problem, we learned a common tactic used in practice that is referred to as *loop* *chunking* or *iteration grouping*, and focuses on reducing the number of tasks created to be closer to the number of processor cores, so as to reduce the overhead of parallel execution:
 
 ```
-forall (g:[0:ng-1])
-  for (i : mygroup(g, ng, [0:n-1])) a[i] = b[i] + c[i]
+forall (g : [0:ng-1])
+  for (i : mygroup(g, ng, [0:n-1]))
+    a[i] = b[i] + c[i]
 ```
 
 This reduce the number of task to *ng*. There are two well known approaches for iteration grouping: *block* and *cyclic*. The *block* maps consecutive iterations to the same group, whereas the cyclic maps iterations in the same congruence class (mod *ng*) to the same group.
+
+### Module 6: Data Flow Synchronization and Pipelining
+
+#### Split-phase Barriers with Java  Phasers
+
+Assuming the process time of lookup and barrier is 100 unit, and ignoring the print time, the critical path length (CPL) of the following code is 100 + 100 = 200:
+
+```java
+// its critical path length is 200
+forall (i : [0:n-1]) { 
+  print HELLO, i;
+  myId = lookup(i);
+  NEXT; // Barrier, equals to phaser.arriveAndAwaitAdvance(), arrives and waits for others to arrive.
+  print BYE, myId;
+}
+```
+
+However, upon closer examination, we can see that the call to lookup(i) is local to iteration i and that there is no specific need to either complete it before the barrier or to complete it after the barrier. In fact, the call to lookup(i) can be performed in parallel with the barrier. To facilitate this *split-phase barrier* (also known as a *fuzzy barrier*) we use two separate APIs from Java Phaser class — ph.arrive() and ph.awaitAdvance(). Together these two APIs form a barrier, but we now have the freedom to insert a computation such as lookup(i) between the two calls as follows:
+
+```java
+// its critical path length is 100
+// initialize phaser ph	for use by n tasks ("parties")
+// n tasks (or threads) must call ph.arrive() (or any related method like arriveAndAwaitAdvance()) for the phaser to advance to the next phase.
+Phaser ph = new Phaser(n);
+// Create forall loop with n iterations that operate on ph 
+forall (i : [0:n-1]) {
+  print HELLO, i;
+  // Arrives at the current phase but doesn't wait for others.
+  // phase represents the current phase number before the arrival
+  // If the phaser was just created and no phases have been completed yet, the current phase is 0.
+  int phase = ph.arrive();
+  myId = lookup(i);
+  ph.awaitAdvance(phase);
+  print BYE, myId;
+}
+```
+
+#### Point-to-Point Synchronization with Phasers
+
+Suppose we have following 3 tasks, what is the critical path length if simply putting a full barrier?
+
+|      | Task0             | Task1                | Task2             |
+| ---- | ----------------- | -------------------- | ----------------- |
+| 1    | X = A(), cost = 1 | Y = B(), cost = 2    | Z = C(), cost = 3 |
+| 2    | D(X, Y), cost = 3 | E(X, Y, Z), cost = 2 | F(Y, Z), cost = 1 |
+
+Apparently, the critical path length is Cost(C()) + Cost(D(X, Y)) = 3 + 3 = 6. However, D(X, Y) actually has not dependency on C(), so they should be able to run parallelly. To increase the parallelism, we can ensure that we are only waiting for the dependencies according to the functional use of the variables, or point-to-point synchronization:
+
+![image-20240721160540367](./img/point2point-sync.png)
+
+With phasers, the critical path length is reduced from 6 to 5.
+
+#### One-Dimensional Iterative Averaging with Phasers
+
+A full barrier is not necessary since *forall* iteration *i* only needs to wait for iterations *i* *−* 1 and *i* + 1 to complete their current phase before iteration *i* can move to its next phase. This idea can be captured by phasers, if we allocate an array of phasers as follows:
+
+```java
+// Allocate array of phasers
+Phaser[] ph = new Phaser[n+2]; //array of phasers
+for (int i = 0; i < ph.length; i++) ph[i] = new Phaser(1);
+
+// Main computation 
+forall (i: [1:n-1]) {
+  for (iter: [0:nsteps-1]) {
+    newX[i] = (oldX[i-1] + oldX[i+1]) / 2;
+    // Indicates that the thread (or task) has completed its work for the current phase
+    // This method increments the internal count of arrived parties
+    ph[i].arrive();
+    // iter represents the current phase (or stage) of the phaser
+    if (index > 1) ph[i-1].awaitAdvance(iter);
+    if (index < n-1) ph[i + 1].awaitAdvance(iter); 
+    swap pointers newX and oldX;
+  }
+}
+```
+
+In this case, the average takes the same amount of time on barrier, but in some cases (sparse matrix calculations) this method ensures that you only wait for neighbors calculations give you more parallelism than barrier.
+
+As we learned earlier, grouping/chunking of parallel iterations in a *forall* can be an important consideration for performance (due to reduced overhead). The idea of grouping of parallel iterations can be extended to *forall* loops with phasers as follows:
+
+```java
+// Allocate array of phasers proportional to number of chunked tasks 
+Phaser[] ph = new Phaser[tasks+2]; //array of phasers
+for (int i = 0; i < ph.length; i++) ph[i] = new Phaser(1);
+
+// Main computation 
+forall (i : [0:tasks-1]) {
+  for (iter : [0:nsteps-1]) {
+    // Compute leftmost boundary element for group
+    int left = i * (n / tasks) + 1;
+    myNew[left] = (myVal[left - 1] + myVal[left + 1]) / 2.0;
+    
+    // Compute rightmost boundary element for group 
+    int right = (i + 1) * (n / tasks);
+    myNew[right] = (myVal[right - 1] + myVal[right + 1]) / 2.0;
+    
+    // Signal arrival on phaser ph AND LEFT AND RIGHT ELEMENTS ARE AV 
+    int	index = i + 1;
+    ph[index].arrive();
+    
+    // Compute interior elements in parallel with barrier 
+    for (int j = left + 1; j <= right - 1; j++)
+      myNew[j] = (myVal[j - 1] + myVal[j + 1]) / 2.0;
+    // Wait for previous phase to complete before advancing 
+    if (index > 1) ph[index - 1].awaitAdvance(iter);
+    if (index < tasks) ph[index + 1].awaitAdvance(iter);
+    swap pointers newX and oldX;
+  }
+}
+```
+
+#### [Pipeline](https://en.wikipedia.org/wiki/Pipeline_(computing)) Parallelism
+
+Let *n* be the number of input items and *p* the number of stages in the pipeline, *WORK* = *n* *×* *p* is the total work that must be done for all data items, and *CPL* = *n* + *p* *−*1 is the *SPAN* or critical path length for the pipeline. Thus, the ideal parallelism is *PAR* = *WORK* / *CPL* = *np* / (*n* + *p* *−* 1). When *n* is much larger than *p* (*n* » *p*), then the ideal parallelism approaches *PAR* = *p* in the limit, which is the best possible case.
+
+
+
+![image-20240728113714279](./img/pipeline.png)
+
+The synchronization required for pipeline parallelism can be implemented using phasers by allocating an array of phasers, such that phaser ph[i] is “signaled” in iteration i by a call to ph[i].arrive() as follows:
+
+```java
+// Code for pipeline stage i
+while ( there is an input to be processed) {
+  // wait for previous stage, if any 
+  if (i > 0) ph[i - 1].awaitAdvance(); 
+
+  process input;
+
+  // signal next stage
+  ph[i].arrive();
+}
+```
+
+#### Data Flow Parallelism
+
+The simple data flow graph studied in the lecture consisted of five nodes and four edges: *A* *→ C, A* *→ D, B* *→ D, B* *→ E*. While futures can be used to generate such a computation graph, e.g., by including calls to A.get() and B.get() in task D, the computation graph edges are implicit in the get() calls when using futures. Instead, we introduced  the asyncAwait notation to specify a task along with an explicit set of preconditions (events that the task must wait for before it can start execution). With this approach, the program can be generated directly from the computation graph as  follows:
+
+
+
+![image-20240728115548072](./img/data-flow.png)
+
+Interestingly, the order of the above statements is not significant. Just as a graph can be defined by enumerating its edges in any order, the above data flow program can be rewritten as follows, without changing its meaning:
+
+```java
+asyncAwait(A, () -> {/* Task C */} ); // Only execute task after event A is triggered 
+asyncAwait(A, B, () -> {/* Task D */} ); // Only execute task after events A, B are triggered 
+asyncAwait(B, () -> {/* Task E */} ); // Only execute task after event B is triggered 
+async( () -> {/* Task A */; A.put(); } ); // Complete task and trigger event A
+async( () -> {/* Task B */; B.put(); } ); // Complete task and trigger event B
+```
+
+Finally, we observed that the power and elegance of data flow parallel programming is accompanied by the possibility of a lack of progress that can be viewed as a form of **deadlock** if the program omits a put() call for signaling an event.
+
+### Module 7: Speaking with industry professionals at Two Sigma
+
+The software engineer of Two Sigma:
+
+> The way I started out with concurrency is we used to learn all these low level constructs: threads, locks, semaphores and mutexes and you had to worry about the problems of deadlocks or data races. Lot of bugs.
+>
+> But eventually, we got introduced to higher level constructs, like deadlock-free locks, message passing techniques like actor model that avoid data races which make concurrent programming a lot easier. These are very important in industrial.
+
+The senior vice president Two Sigma:
+
+> We are looking for vey strong computer science foundational skills, including parallel and distributed computing. Not only multi-threading, but also frameworks like Apache Spark, OpenMP, MPI or any of these things that we can put to use very quickly and experienced with GPU. Communication skills, teamwork are also important besides fundamental skills because we are working on a very large system today. Technology is changing so quickly, and I think something that helped me a lot was that we focused very heavily on fundamental computer science skills, which are much more lasting with changes in the technology.
