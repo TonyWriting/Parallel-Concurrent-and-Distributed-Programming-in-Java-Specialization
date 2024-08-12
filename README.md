@@ -386,7 +386,7 @@ Suppose we have following 3 tasks, what is the critical path length if simply pu
 
 Apparently, the critical path length is Cost(C()) + Cost(D(X, Y)) = 3 + 3 = 6. However, D(X, Y) actually has not dependency on C(), so they should be able to run parallelly. To increase the parallelism, we can ensure that we are only waiting for the dependencies according to the functional use of the variables, or point-to-point synchronization:
 
-![image-20240721160540367](./Img/point2point-sync.png)
+![image-20240721160540367](./img/point2point-sync.png)
 
 With phasers, the critical path length is reduced from 6 to 5.
 
@@ -455,7 +455,7 @@ Let *n* be the number of input items and *p* the number of stages in the pipelin
 
 
 
-![image-20240728113714279](./Img/pipeline.png)
+![image-20240728113714279](./img/pipeline.png)
 
 The synchronization required for pipeline parallelism can be implemented using phasers by allocating an array of phasers, such that phaser ph[i] is “signaled” in iteration i by a call to ph[i].arrive() as follows:
 
@@ -478,7 +478,7 @@ The simple data flow graph studied in the lecture consisted of five nodes and fo
 
 
 
-![image-20240728115548072](./Img/data-flow.png)
+![image-20240728115548072](./img/data-flow.png)
 
 Interestingly, the order of the above statements is not significant. Just as a graph can be defined by enumerating its edges in any order, the above data flow program can be rewritten as follows, without changing its meaning:
 
@@ -548,7 +548,7 @@ In this lecture, we introduced *unstructured locks* (which can be obtained in Ja
 
 However, it is also important to remember that the generality and power of unstructured locks is accompanied by an extra responsibility on the part of the programmer, e.g., ensuring that calls to `unlock()` are not forgotten, even in the presence of **exceptions**.
 
-![image-20240810101651671](./Img/unstructured-locks.png)
+![image-20240810101651671](./img/unstructured-locks.png)
 
 The `Lock` interface, especially its implementation `ReentrantLock`, provides a more flexible and powerful mechanism for synchronization.  You must explicitly call the `lock()` method to acquire the lock and `unlock()` to release it, typically using a `try-finally` block to ensure the lock is released even if an exception occurs.
 
@@ -590,7 +590,7 @@ The first is *deadlock*, in which all threads are blocked indefinitely, thereby 
 
 The term “liveness” refers to a progress guarantee. The three progress guarantees that correspond to the absence of the conditions listed above are *deadlock freedom*, *livelock freedom*, and *starvation freedom*. 
 
-![image-20240810103242618](./Img/liveness.png)
+![image-20240810103242618](./img/liveness.png)
 
 ### Dining Philosophers
 
@@ -598,7 +598,7 @@ In this lecture, we studied a classical concurrent programming example that is r
 
 First, we examined a solution to this problem using structured locks, and demonstrated how this solution could lead to a deadlock scenario (but not livelock). Second, we examined a solution using unstructured locks with `tryLock()` and `unlock()` operations that never block, and demonstrated how this solution could lead to a livelock scenario (but not deadlock). Finally, we observed how a simple modification to the first solution with structured locks, in which one philosopher picks up their right chopstick and their left, while the others pick up their left chopstick first and then their right, can guarantee an absence of deadlock. However, this may still have starvation which could be solved by semaphore.
 
-![image-20240810104949349](./Img/dining-philosophers.png)
+![image-20240810104949349](./img/dining-philosophers.png)
 
 
 
