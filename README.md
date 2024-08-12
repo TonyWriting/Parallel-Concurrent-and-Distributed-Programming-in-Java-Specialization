@@ -386,7 +386,7 @@ Suppose we have following 3 tasks, what is the critical path length if simply pu
 
 Apparently, the critical path length is Cost(C()) + Cost(D(X, Y)) = 3 + 3 = 6. However, D(X, Y) actually has not dependency on C(), so they should be able to run parallelly. To increase the parallelism, we can ensure that we are only waiting for the dependencies according to the functional use of the variables, or point-to-point synchronization:
 
-![image-20240721160540367](./img/point2point-sync.png)
+![image-20240721160540367](./Img/point2point-sync.png)
 
 With phasers, the critical path length is reduced from 6 to 5.
 
@@ -455,7 +455,7 @@ Let *n* be the number of input items and *p* the number of stages in the pipelin
 
 
 
-![image-20240728113714279](./img/pipeline.png)
+![image-20240728113714279](./Img/pipeline.png)
 
 The synchronization required for pipeline parallelism can be implemented using phasers by allocating an array of phasers, such that phaser ph[i] is “signaled” in iteration i by a call to ph[i].arrive() as follows:
 
@@ -478,7 +478,7 @@ The simple data flow graph studied in the lecture consisted of five nodes and fo
 
 
 
-![image-20240728115548072](./img/data-flow.png)
+![image-20240728115548072](./Img/data-flow.png)
 
 Interestingly, the order of the above statements is not significant. Just as a graph can be defined by enumerating its edges in any order, the above data flow program can be rewritten as follows, without changing its meaning:
 
@@ -503,3 +503,102 @@ The software engineer of Two Sigma:
 The senior vice president Two Sigma:
 
 > We are looking for vey strong computer science foundational skills, including parallel and distributed computing. Not only multi-threading, but also frameworks like Apache Spark, OpenMP, MPI or any of these things that we can put to use very quickly and experienced with GPU. Communication skills, teamwork are also important besides fundamental skills because we are working on a very large system today. Technology is changing so quickly, and I think something that helped me a lot was that we focused very heavily on fundamental computer science skills, which are much more lasting with changes in the technology.
+
+## Concurrent Programming in Java
+
+### Module 2: Threads and Locks
+
+#### Threads
+
+A unique aspect of Java compared to prior mainstream programming languages is that Java included the notions of threads (as instances of the `java.lang.Threadjava.lang.Thread` class) in its language definition right from the start.
+
+When an instance of Thread is *created* (via a new operation), it does not start executing right away; instead, it can only start executing when its start() method is invoked. The statement or computation to be executed by the thread is specified as a parameter to the constructor.
+
+The Thread class also includes a *wait* operation in the form of a join()join() method. If thread t0t0 performs a t1.join() call, thread t0 will be forced to wait until thread t1 completes, after which point it can safely access any values computed by thread t1. Since there is no restriction on which thread can perform a join on which other thread, it is possible for a programmer to erroneously create a *deadlock cycle* with join operations. (A deadlock occurs when two threads wait for each other indefinitely, so that neither can make any progress.)
+
+TODO: comparison with task in C#
+
+#### Structured Locks
+
+ Structured locks can be used to enforce *mutual exclusion* and avoid *data races*, as illustrated by the incr() method in the A.count example, and the insert() and remove() methods in the the Buffer example. A major benefit of structured locks is that their *acquire* and *release* operations are implicit, since these operations are automatically performed by the Java runtime environment when entering and exiting the scope of a synchronized statement or method, even if an exception is thrown in the middle.
+
+We also learned about wait() and notify() operations that can be used to block and resume threads that need to wait for specific conditions. For example, a producer thread performing an insert() operation on a *bounded buffer* can call wait() when the buffer is full, so that it is only unblocked when a consumer thread performing a remove() operation calls notify(). Likewise, a consumer thread performing a remove() operation on a *bounded buffer* can call wait() when the buffer is empty, so that it is only unblocked when a producer thread performing an insert() operation calls notify(). Structured locks are also referred to as *intrinsic locks* or *monitors*.
+
+The `synchronized` keyword is the traditional and simpler mechanism for synchronization in Java. When you use `synchronized`, the intrinsic lock (also known as the monitor) associated with an object or class is used automatically. The use of `synchronized` methods or statements provides access to the implicit monitor lock associated with every object, but forces all lock acquisition and release to occur in a block-structured way: when multiple locks are acquired they must be released in the opposite order, and all locks must be released in the same lexical scope in which they were acquired.
+
+```Java
+public class Counter {
+    private int count = 0;
+
+    public synchronized void increment() {
+        count++;
+    }
+
+    public synchronized int getCount() {
+        return count;
+    }
+}
+```
+
+The `synchronized` keyword in Java is conceptually similar to the `lock` statement in C#.
+
+#### Unstructured Locks
+
+In this lecture, we introduced *unstructured locks* (which can be obtained in Java by creating instances of  `ReentrantLock()`, and used three examples to demonstrate their generality relative to structured locks. The first example showed how explicit lock() and unlock() operations on unstructured locks can be used to support a *hand-over-hand* locking pattern that implements a non-nested pairing of lock/unlock operations which cannot be achieved with synchronized statements/methods. The second example showed how the `tryLock()` operations in unstructured locks can enable a thread to check the availability of a lock, and thereby acquire it if it is available or do something else if it is not. The third example illustrated the value of *read-write locks* (which can be obtained in Java by creating instances of `ReentrantReadWriteLock()`, whereby multiple threads are permitted to acquire a lock L in “read mode”, `L.readLock().lock()`, but only one thread is permitted to acquire the lock in “write mode”, `L.writeLock().lock()`.
+
+However, it is also important to remember that the generality and power of unstructured locks is accompanied by an extra responsibility on the part of the programmer, e.g., ensuring that calls to `unlock()` are not forgotten, even in the presence of **exceptions**.
+
+![image-20240810101651671](./Img/unstructured-locks.png)
+
+The `Lock` interface, especially its implementation `ReentrantLock`, provides a more flexible and powerful mechanism for synchronization.  You must explicitly call the `lock()` method to acquire the lock and `unlock()` to release it, typically using a `try-finally` block to ensure the lock is released even if an exception occurs.
+
+```java
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+
+public class Counter {
+    private int count = 0;
+    private final Lock lock = new ReentrantLock();
+
+    public void increment() {
+        lock.lock();
+        try {
+            count++;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public int getCount() {
+        lock.lock();
+        try {
+            return count;
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+```
+
+So we learned about two mechanisms for performing synchronization in concurrent Java programs: Java synchronized statement and Java `ReentrantLock` class.
+
+#### Liveness and Progress Guarantees
+
+In this lecture, we studied three ways in which a parallel program may enter a state in which it stops making forward progress. For sequential programs, an “infinite loop” is a common way for a program to stop making forward progress, but there are other ways to obtain an absence of progress in a parallel program. 
+
+The first is *deadlock*, in which all threads are blocked indefinitely, thereby preventing any forward progress. The second is *livelock*, in which all threads repeatedly perform an interaction that prevents forward progress, e.g., an infinite “loop” of repeating lock acquire/release patterns. The third is *starvation*, in which at least one thread is prevented from making any forward progress. 
+
+The term “liveness” refers to a progress guarantee. The three progress guarantees that correspond to the absence of the conditions listed above are *deadlock freedom*, *livelock freedom*, and *starvation freedom*. 
+
+![image-20240810103242618](./Img/liveness.png)
+
+### Dining Philosophers
+
+In this lecture, we studied a classical concurrent programming example that is referred to as the *Dining Philosophers Problem*. In this problem, there are five threads, each of which models a “philosopher” that repeatedly performs a sequence of actions which include *think, pick up chopsticks, eat*, and *put down chopsticks*. 
+
+First, we examined a solution to this problem using structured locks, and demonstrated how this solution could lead to a deadlock scenario (but not livelock). Second, we examined a solution using unstructured locks with `tryLock()` and `unlock()` operations that never block, and demonstrated how this solution could lead to a livelock scenario (but not deadlock). Finally, we observed how a simple modification to the first solution with structured locks, in which one philosopher picks up their right chopstick and their left, while the others pick up their left chopstick first and then their right, can guarantee an absence of deadlock. However, this may still have starvation which could be solved by semaphore.
+
+![image-20240810104949349](./Img/dining-philosophers.png)
+
+
+
