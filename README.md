@@ -514,13 +514,13 @@ A unique aspect of Java compared to prior mainstream programming languages is th
 
 When an instance of Thread is *created* (via a new operation), it does not start executing right away; instead, it can only start executing when its start() method is invoked. The statement or computation to be executed by the thread is specified as a parameter to the constructor.
 
-The Thread class also includes a *wait* operation in the form of a join()join() method. If thread t0t0 performs a t1.join() call, thread t0 will be forced to wait until thread t1 completes, after which point it can safely access any values computed by thread t1. Since there is no restriction on which thread can perform a join on which other thread, it is possible for a programmer to erroneously create a *deadlock cycle* with join operations. (A deadlock occurs when two threads wait for each other indefinitely, so that neither can make any progress.)
+The Thread class also includes a *wait* operation in the form of a join() method. If thread t0 performs a t1.join() call, thread t0 will be forced to wait until thread t1 completes, after which point it can safely access any values computed by thread t1. Since there is no restriction on which thread can perform a join on which other thread, it is possible for a programmer to erroneously create a *deadlock cycle* with join operations. (A deadlock occurs when two threads wait for each other indefinitely, so that neither can make any progress.)
 
 TODO: comparison with task in C#
 
 #### Structured Locks
 
- Structured locks can be used to enforce *mutual exclusion* and avoid *data races*, as illustrated by the incr() method in the A.count example, and the insert() and remove() methods in the the Buffer example. A major benefit of structured locks is that their *acquire* and *release* operations are implicit, since these operations are automatically performed by the Java runtime environment when entering and exiting the scope of a synchronized statement or method, even if an exception is thrown in the middle.
+Structured locks can be used to enforce *mutual exclusion* and avoid *data races*, as illustrated by the incr() method in the A.count example, and the insert() and remove() methods in the the Buffer example. A major benefit of structured locks is that their *acquire* and *release* operations are implicit, since these operations are automatically performed by the Java runtime environment when entering and exiting the scope of a synchronized statement or method, even if an exception is thrown in the middle.
 
 We also learned about wait() and notify() operations that can be used to block and resume threads that need to wait for specific conditions. For example, a producer thread performing an insert() operation on a *bounded buffer* can call wait() when the buffer is full, so that it is only unblocked when a consumer thread performing a remove() operation calls notify(). Likewise, a consumer thread performing a remove() operation on a *bounded buffer* can call wait() when the buffer is empty, so that it is only unblocked when a producer thread performing an insert() operation calls notify(). Structured locks are also referred to as *intrinsic locks* or *monitors*.
 
@@ -545,6 +545,8 @@ The `synchronized` keyword in Java is conceptually similar to the `lock` stateme
 #### Unstructured Locks
 
 In this lecture, we introduced *unstructured locks* (which can be obtained in Java by creating instances of  `ReentrantLock()`, and used three examples to demonstrate their generality relative to structured locks. The first example showed how explicit lock() and unlock() operations on unstructured locks can be used to support a *hand-over-hand* locking pattern that implements a non-nested pairing of lock/unlock operations which cannot be achieved with synchronized statements/methods. The second example showed how the `tryLock()` operations in unstructured locks can enable a thread to check the availability of a lock, and thereby acquire it if it is available or do something else if it is not. The third example illustrated the value of *read-write locks* (which can be obtained in Java by creating instances of `ReentrantReadWriteLock()`, whereby multiple threads are permitted to acquire a lock L in “read mode”, `L.readLock().lock()`, but only one thread is permitted to acquire the lock in “write mode”, `L.writeLock().lock()`.
+
+Structured locking always blocks a thread at a synchronization point if the lock is not available, whereas unstructured locking provides an API that allows that thread to perform other meaningful tasks if the lock is unavailable.
 
 However, it is also important to remember that the generality and power of unstructured locks is accompanied by an extra responsibility on the part of the programmer, e.g., ensuring that calls to `unlock()` are not forgotten, even in the presence of **exceptions**.
 
@@ -600,5 +602,89 @@ First, we examined a solution to this problem using structured locks, and demons
 
 ![image-20240810104949349](./img/dining-philosophers.png)
 
+### Module 3: Critical Sections and Isolation
 
+#### Critical Sections
 
+The key challenge in concurrent programming is to manage the accesses by concurrent threads to shared resources. Previously we learned about locks to do it, now we will learn a more high level way called critical section. It indicates that these 2 blocks of code have to be executed in mutual exclusion. How the mutual exclusion is engineered is **not** the programmer's problem. It could be implemented using locks or hardware features like transactional memory. Transactional memory is a concurrency control mechanism that simplifies the development of parallel programs by allowing a group of memory operations to execute in an all-or-nothing fashion, similar to database transactions.
+
+![image-20240922155312843](./img/critical-section.png)
+
+#### Object Based Isolation (Monitors)
+
+In [concurrent programming](https://en.wikipedia.org/wiki/Concurrent_computing), a **monitor** is a synchronization construct that prevents threads from concurrently accessing a shared object's state and allows them to wait for the state to change. They provide a mechanism for threads to temporarily give up exclusive access in order to wait for some condition to be met, before regaining exclusive access and resuming their task. A monitor consists of a [mutex (lock)](https://en.wikipedia.org/wiki/Lock_(computer_science)) and at least one **condition variable**. A condition variable is explicitly 'signaled' when the object's state is modified, temporarily passing the mutex to another thread 'waiting' on the conditional variable.
+
+One of the major challenges of writing concurrent applications is the correct protection of data shared by multiple, concurrently executing streams of execution. "Correct" protection of shared data generally has several properties:
+
+1. A deadlock cannot occur (i.e. progress is guaranteed).
+2. A data race cannot occur.
+3. That protection does not cause excessive contention, and hence does **NOT** significantly hurt performance.
+
+One of the concurrent programming concepts you learned about this week that helps to prevent all three of the above issues is object-based isolation. In object-based isolation, the objects being accessed are explicitly passed to the synchronization construct being used. The synchronization construct can then use this information on the specific objects being accessed by the critical section to optimize synchronization and improve safety. **This is in contrast to global isolation**, where a single global lock or construct ensures safety but might experience heavy contention. 
+
+In the following double linked-list example, the DELETE method could not run in parallel for node B and node C (we could use critical section to make it sync), but it could for node B and node E because they do not have shared variables. So this is where object-based isolation comes in. When DELETE(B), the isolated objects are A, B and C; when DELETE(E), they are D, E and F. So no intersection means they could proceed in parallel.
+
+![image-20240922163120977](./img/delete-linked-list.png)
+
+The fundamental idea behind object-based isolation is that an isolated construct can be extended with a set of objects that indicate the scope of isolation, by using the following rules: if two isolated constructs have an empty intersection in their object sets they can execute in parallel, otherwise they must execute in mutual exclusion. We observed that implementing this capability can be very challenging with locks because a correct implementation must enforce the correct levels of mutual exclusion without entering into deadlock or livelock states.
+
+The relationship between object-based isolation and monitors is that all methods in a monitor object, M1, are executed as object-based isolated constructs with a singleton object set, {M1}. Similarly, all methods in a monitor object, M2, are executed as object-based isolated constructs with a singleton object set, {M2} which has an empty intersection with {M1}.
+
+### Concurrent Spanning Tree Algorithm
+
+Consider how to generate a minimum-cost tree, we could think about a depth-first search algorithm shown as the following picture. We could make the `Compute(v)` to be in parallel. But when `Compute(A)` and `Compute(C)` run in parallel, there is a race condition in D. So we need to add a object-isolation on D. This isolation guarantee mutual exclusion when A and C are both accessing D. It is a common pattern called **compare and set**.
+
+![image-20241007153720075](./img/spanning-tree.png)
+
+### Atomic Variables
+
+In this lecture, we studied *Atomic Variables*, an important special case of object-based isolation which can be very efficiently implemented on modern computer systems. In the example given in the lecture, we have multiple threads processing an array, each using object-based isolation to safely increment a shared object, *cur*, to compute an index *j* which can then be used by the thread to access a thread-specific element of the array. 
+
+However, instead of using object-based isolation, we can declare the index *cur* to be an *Atomic Integer* variable and use an atomic operation called `getAndAdd()` to atomically read the current value of *cur* and increment its value by 1. Thus, `j=cur.getAndAdd(1)` has the same semantics as 
+
+`isolated(cur) { j=cur;cur=cur+1;j=cur;cur=cur+1; }` but is implemented much more efficiently using hardware support on today’s machines. 
+
+Another example that we studied in the lecture concerns *Atomic Reference* variables, which are reference variables that can be atomically read and modified using methods such as `compareAndSet()`. If we have an atomic reference *ref*, then the call to `ref.compareAndSet(expected, new)` will compare the value of *ref* to *expected*, and if they are the same, set the value of *ref* to *new* and return *true*. This all occurs in one atomic operation that cannot be interrupted by any other methods invoked on the *ref* object. If *ref* and *expected* have different values, `compareAndSet()` will not modify anything and will simply return *false*.
+
+![image-20241007155449764](./img/atomic-variable.png)
+
+```JAva
+import java.util.concurrent.atomic.AtomicReference;
+
+public class AtomicReferenceExample {
+    public static void main(String[] args) {
+        AtomicReference<String> atomicReference = new AtomicReference<>("initial value");
+
+        // Get the current value
+        System.out.println("Value: " + atomicReference.get());  // Output: initial value
+
+        // Set a new value
+        atomicReference.set("new value");
+
+        // Perform compare-and-set operation
+        boolean result = atomicReference.compareAndSet("initial value", "updated value");
+        System.out.println("Compare and Set result: " + result);  // Output: false, because current value isn't "initial value"
+
+        // Correct usage of compare-and-set
+        result = atomicReference.compareAndSet("new value", "updated value");
+        System.out.println("Compare and Set result: " + result);  // Output: true
+        System.out.println("Updated Value: " + atomicReference.get());  // Output: updated value
+    }
+}
+```
+
+| Feature          | **Atomic Variables**                                         | **Atomic Reference Variables**                               |
+| ---------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| **Type of Data** | Operates on **primitive types** (`int`, `long`, `boolean`)   | Operates on **object references** (e.g., `String`, `Object`, `List`) |
+| **Classes**      | `AtomicInteger`, `AtomicLong`, `AtomicBoolean`, etc.         | `AtomicReference<T>`, `AtomicStampedReference<T>`, etc.      |
+| **Operations**   | Atomic operations specific to primitive types: `incrementAndGet()`, `addAndGet()`, etc. | Operations like `compareAndSet()`, `get()`, and `set()` for references |
+| **Use Case**     | For atomic updates on **primitive values** in multithreaded environments | For atomic updates on **object references** shared between threads |
+| **Performance**  | Slightly more optimized for **primitives**                   | Flexible for **custom object references**                    |
+
+### Read, Write Isolation
+
+In this lecture we discussed *Read-Write Isolation*, which is a refinement of object-based isolation, and is a higher-level abstraction of the *read-write locks* studied earlier as part of Unstructured Locks. The main idea behind read-write isolation is to separate read accesses to shared objects from write accesses. This approach enables multiple threads that **only read shared objects to freely execute in parallel** since they are not modifying any shared objects. The need for mutual exclusion only arises when **one or more** threads attempt to enter an isolated section with **write** access to a shared object. 
+
+This approach exposes more concurrency than object-based isolation since it allows read accesses to be executed in parallel. In the doubly-linked list example from our lecture, when deleting an object *cur* from the list by calling *delete(cur)*, we can replace object-based isolation on *cur* with read-only isolation, since deleting an object does not modify the object being deleted; only the previous and next objects in the list need to be modified. So we have `ISOLATED(READ(cur))`, `ISOLATED(WRITE(cur.PREV))` and `ISOLATED(WRITE(cur.NEXT))`.
+
+![image-20241007160954499](./img/read-write-isolation.png)
